@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Paya Stripe Demo</title></head>
+<body>
+<h1>Paya Stripe Demo</h1>
+<div id="userInfo"></div>
+
+<label>Monto (EUR): <input id="amount" value="10"></label>
+<button id="pay">Pagar con tarjeta (Stripe)</button>
+
+<!-- Stripe.js -->
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+const API = 'http://localhost:3000';
+let token = null; // guarda token JWT tras login (demo)
+
+async function createPayment() {
+  const amountEur = parseFloat(document.getElementById('amount').value);
+  const res = await fetch(API + '/api/create-payment-intent', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ amount: Math.round(amountEur*100) })
+  });
+  const data = await res.json();
+  const stripe = Stripe('pk_test_TU_PUBLISHABLE_KEY'); // pon tu clave pública de Stripe
+  // Usa Stripe Elements o Checkout; aquí uso confirmCardPayment (requiere Elements UI en real)
+  const { error, paymentIntent } = await stripe.confirmCardPayment(data.clientSecret, {
+    payment_method: {
+      card: { token: 'tok_visa' } // EN PRODUCCIÓN: reemplazar por Elements
+    }
+  });
+  if(error) alert('Error: ' + error.message);
+  else alert('Pago confirmado!');
+}
+document.getElementById('pay').onclick = createPayment;
+</script>
+</body>
+</html>
