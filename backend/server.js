@@ -1,128 +1,123 @@
-// backend/server.js
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const Stripe = require('stripe');
-const bodyParser = require('body-parser');
-const { MongoClient, ObjectId } = require('mongodb');
+javascript
+// server.js
+import express from 'express';
+import mongoose from 'mongoose';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import dotenv from 'dotenv';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-11-15' });
+dotenv.config();
+
 const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Middleware
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
-// Stripe webhook needs raw body
-app.use('/webhook', bodyParser.raw({type: 'application/json'}));
+// Conexión a MongoDB
+mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+.then(() => console.log('Conectado a MongoDB'))
+.catch(err => console.error('Error al conectar a MongoDB:', err));
 
-/** --- Simple MongoDB helper (single file demo) --- **/
-let db;
-async function initDb() {
-  const client = new MongoClient(process.env.MONGO_URI);
-  await client.connect();
-  db = client.db(process.env.MONGO_DB || 'paya');
-  await db.collection('users').createIndex({ email: 1 }, { unique: true });
+// Ruta de ejemplo
+app.get('/', (req, res) => {
+res.send('¡Hola, mundo! Bienvenido a la API de tu aplicación.');
+});
+
+// Iniciar el servidor
+app.listen(PORT, () => {
+console.log(Servidor corriendo en http://localhost:${PORT});
+});
+
+3. Modelo de Usuario (Mongoose)
+
+Crea un archivo User.js en una carpeta models para el modelo de usuario.
+javascript
+// models/User.js
+import mongoose from 'mongoose';
+
+const UserSchema = new mongoose.Schema({
+username: { type: String, required: true, unique: true },
+email: { type: String, required: true, unique: true },
+password: { type: String, required: true },
+});
+
+const User = mongoose.model('User', UserSchema);
+export default User;
+
+4. Rutas de Autenticación
+
+Crea un archivo auth.js en una carpeta routes para el manejo de autenticación.
+javascript
+// routes/auth.js
+import express from 'express';
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
+import bcrypt from 'bcrypt';
+
+const router = express.Router();
+
+// Registro de usuario
+router.post('/register', async (req, res) => {
+const { username, email, password } = req.body;
+const hashedPassword = await bcrypt.hash(password, 10);
+
+const newUser = new User({ username, email, password: hashedPassword });
+
+await newUser.save();
+res.status(201).json({ message: 'Usuario creado exitosamente.' });
+});
+
+// Autenticación de usuario
+router.post('/login', async (req, res) => {
+const { email, password } = req.body;
+const user = await User.findOne({ email });
+
+if (!user || !(await bcrypt.compare(password, user.password))) {
+return res.status(401).json({ message: 'Credenciales inválidas.' });
 }
-initDb().catch(console.error);
 
-/** --- Auth (registro/login simple) --- **/
-app.post('/api/register', async (req, res) => {
-  const { email, password, name } = req.body;
-  const hash = await bcrypt.hash(password, 10);
-  try {
-    const r = await db.collection('users').insertOne({ email, password: hash, name, balance: 0, createdAt: new Date() });
-    res.json({ ok: true, id: r.insertedId });
-  } catch(e) { res.status(400).json({ error: 'Email ya registrado' }); }
-});
-app.post('/api/login', async (req,res) => {
-  const { email, password } = req.body;
-  const user = await db.collection('users').findOne({ email });
-  if(!user) return res.status(401).json({ error: 'Credenciales invalidas' });
-  const match = await bcrypt.compare(password, user.password);
-  if(!match) return res.status(401).json({ error: 'Credenciales invalidas' });
-  const token = jwt.sign({ uid: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '8h' });
-  res.json({ token, user: { id: user._id, email: user.email, name: user.name, balance: user.balance } });
+const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+res.json({ token });
 });
 
-// Middleware auth
-function auth(req,res,next){
-  const h = req.headers.authorization;
-  if(!h) return res.status(401).json({ error: 'No auth' });
-  const token = h.replace('Bearer ','');
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch(e){ res.status(401).json({ error: 'Token inválido' }); }
+export default router;
+
+5. Integración del cliente con React (Frontend)
+
+Asegúrate de tener configurado React y que hayas instalado axios para las solicitudes HTTP.
+bash
+npx create-react-app my-paypal-clone
+cd my-paypal-clone
+npm install axios
+Aquí un ejemplo básico de un componente de registro:
+javascript
+// src/components/Register.js
+import React, { useState } from 'react';
+import axios from 'axios';
+
+const Register = () => {
+const [form, setForm] = useState({ username: '', email: '', password: '' });
+
+const handleChange = (e) => {
+const { name, value } = e.target;
+setForm({ ...form, [name]: value });
+};
+
+const handleSubmit = async (e) => {
+e.preventDefault();
+try {
+const response = await axios.post('http://localhost:5000/api/auth/register', form);
+alert(response.data.message);
+} catch (error) {
+console.error('Error al registrarse:', error);
 }
+};
 
-/** --- Crear PaymentIntent (cliente paga con tarjeta) --- **/
-app.post('/api/create-payment-intent', auth, async (req, res) => {
-  const { amount, currency = 'eur' } = req.body;
-  // amount en céntimos (ej: 1000 = 10,00 EUR)
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount,
-    currency,
-    metadata: { userId: req.user.uid.toString() },
-  });
-  res.json({ clientSecret: paymentIntent.client_secret });
-});
-
-/** --- Webhook para confirmar pagos y actualizar ledger --- **/
-app.post('/webhook', async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.log('Webhook signature error', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if(event.type === 'payment_intent.succeeded') {
-    const pi = event.data.object;
-    const userId = pi.metadata.userId;
-    const amount = pi.amount; // céntimos
-    console.log('Pago confirmado para user', userId, 'monto', amount);
-    // Actualizar ledger interno
-    await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $inc: { balance: amount/100 }});
-    await db.collection('transactions').insertOne({
-      userId: new ObjectId(userId),
-      type: 'deposit',
-      amount: amount/100,
-      stripeId: pi.id,
-      createdAt: new Date()
-    });
-  }
-
-  // maneja otros eventos si hace falta
-  res.json({ received: true });
-});
-
-/** --- Transferencia entre usuarios (interno) --- **/
-app.post('/api/transfer', auth, async (req,res) => {
-  const { toEmail, amount } = req.body; // amount en euros
-  const from = await db.collection('users').findOne({ _id: new ObjectId(req.user.uid) });
-  const to = await db.collection('users').findOne({ email: toEmail });
-  if(!to) return res.status(404).json({ error: 'Destinatario no existe' });
-  if(from.balance < amount) return res.status(400).json({ error: 'Fondos insuficientes' });
-
-  // Operación segura: con transacción (Mongo demo)
-  const session = db.client.startSession();
-  try {
-    await session.withTransaction(async () => {
-      await db.collection('users').updateOne({ _id: from._id }, { $inc: { balance: -amount } }, { session });
-      await db.collection('users').updateOne({ _id: to._id }, { $inc: { balance: amount } }, { session });
-      await db.collection('transactions').insertMany([
-        { userId: from._id, type: 'transfer_out', amount: amount, to: to._id, createdAt: new Date() },
-        { userId: to._id, type: 'transfer_in', amount: amount, from: from._id, createdAt: new Date() }
-      ], { session });
-    });
-    res.json({ ok: true });
-  } catch(e){
-    console.error(e);
-    res.status(500).json({ error: 'Error en la transferencia' });
-  } finally { await session.endSession(); }
-});
-
-app.listen(process.env.PORT || 3000, () => console.log('Server listening'));
+return (
+<form onSubmit={handleSubmit}>
+<input name="username" value={form.username} onChange={handleChange} placeholder="Username" required />
+<input name="email" value={form.email} onChange={handleChange} placeholder="Email" required />
+<input name="password" type="password" value={form.password} onChange={handleChange} placeholder="Password" required />
+<button type="submit">Registrar);
